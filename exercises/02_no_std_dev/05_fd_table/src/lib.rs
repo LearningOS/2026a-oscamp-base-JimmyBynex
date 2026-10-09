@@ -91,14 +91,10 @@ impl FdTable {
     /// Close an fd. Returns true on success, false if the fd doesn't exist or is already closed.
     pub fn close(&mut self, fd: usize) -> bool {
         // TODO
-        self.table.get_mut(fd).map_or(false, |x| {
-            if x.is_some() {
-                *x = None;
-                true
-            } else {
-                false
-            }
-        })
+       if let Some(slot) = self.table.get_mut(fd) {
+              if slot.is_some() { *slot = None; return true; }
+        }
+        false
     }
 
     /// Return the number of currently allocated fds (excluding closed ones)

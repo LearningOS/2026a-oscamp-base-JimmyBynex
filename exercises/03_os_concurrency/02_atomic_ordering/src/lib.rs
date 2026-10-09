@@ -13,7 +13,12 @@
 //! When thread A writes with Release, and thread B reads the same location with Acquire,
 //! thread B will see all writes that thread A performed before the Release.
 
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
+
+/// OnceCell 的三态
+const UNINIT: u8 = 0;
+const WRITING: u8 = 1;
+const DONE: u8 = 2;
 
 /// Use Release-Acquire semantics to safely pass data between two threads.
 ///
@@ -40,7 +45,8 @@ impl FlagChannel {
     pub fn produce(&self, value: u32) {
         // TODO: Store data (choose appropriate Ordering)
         // TODO: Set ready = true (choose appropriate Ordering so data writes complete before this)
-        todo!()
+       self.data.store(value, Ordering::Relaxed);
+       self.ready.store(true, Ordering::Release);
     }
 
     /// Consumer: spin-wait for ready flag, then read data.
@@ -51,7 +57,8 @@ impl FlagChannel {
     pub fn consume(&self) -> u32 {
         // TODO: Spin-wait for ready to become true (choose appropriate Ordering)
         // TODO: Read data (choose appropriate Ordering)
-        todo!()
+        while !self.ready.load(Ordering::Acquire) {}
+        self.data.load(Ordering::Relaxed)
     }
 
     /// Reset channel state
@@ -61,35 +68,47 @@ impl FlagChannel {
     }
 }
 
-/// A simple once-initializer using SeqCst.
+/// A simple once-initializer using a three-state flag.
 /// Guarantees `init` is executed only once, and all threads see the initialized value.
 pub struct OnceCell {
-    initialized: AtomicBool,
+    state: AtomicU8,
     value: AtomicU32,
 }
 
 impl OnceCell {
     pub const fn new() -> Self {
         Self {
-            initialized: AtomicBool::new(false),
+            state: AtomicU8::new(UNINIT),
             value: AtomicU32::new(0),
         }
     }
 
     /// Attempt initialization. If not yet initialized, store value and return true.
     /// If already initialized, return false.
-    ///
-    /// Hint: use `compare_exchange` to ensure only one thread succeeds.
     pub fn init(&self, val: u32) -> bool {
-        // TODO: Use compare_exchange to ensure initialization only once
-        // Store value on success
-        todo!()
+        // 抢名额：只有把 UNINIT 改成 WRITING 的线程才是赢家
+        if self
+            .state
+            .compare_exchange(UNINIT, WRITING, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok()
+        {
+            // 赢家：先写数据，再用 Release 公布 DONE
+            self.value.store(val, Ordering::Relaxed);
+            self.state.store(DONE, Ordering::Release);
+            true
+        } else {
+            false
+        }
     }
 
     /// Get value. Returns Some if initialized, otherwise None.
     pub fn get(&self) -> Option<u32> {
-        // TODO: Check initialized flag, then read value
-        todo!()
+        // 只有确认 DONE，value 才保证可见
+        if self.state.load(Ordering::Acquire) == DONE {
+            Some(self.value.load(Ordering::Relaxed))
+        } else {
+            None
+        }
     }
 }
 
